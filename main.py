@@ -599,6 +599,8 @@ ERROR: {self.text}
 
 class Calculator():
     def __init__(self):
+        plt.ion()  # enter interactive mode to prevent blocking
+
         self.interpreter = Interpreter()
         self.commands = {
             'EXIT': self._exit,
@@ -648,12 +650,13 @@ class Calculator():
 
         arg_name = 'x' if isinstance(func_def, BuiltinFunction) else func_def.arg_name
 
+        plt.figure()
         plt.plot(x_vals, y_vals)
         plt.xlabel(arg_name)
         plt.ylabel(f'{func_name}({arg_name})')
         plt.title(f'Graph of {func_name}({arg_name}), {arg_name} ∈ [{x_min}, {x_max}]')
         plt.grid(True)
-        plt.show(block=False)
+        plt.show()
 
     def run(self):
         """The read-eval-print loop.
@@ -963,6 +966,7 @@ class TestInterpreter(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(argv=[''], exit=False)
+    print('NOTE: DISABLE UNITTESTS BEFORE SUBMISSION\n' * 5)
 
 
 ################
