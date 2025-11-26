@@ -592,10 +592,20 @@ class Interpreter():
         self._register_constants({
             'pi': math.pi,
             'e': math.e,
+            'ans': 0,
+            'preans': 0
         })
 
     def interpret(self, root: AST) -> float | None:
-        return root.interpret(self)
+        try:
+            result = root.interpret(self)
+        except Exception as e:
+            raise e
+        else:
+            if result is not None:
+                self.symbols['preans'].value = self.symbols['ans'].value
+                self.symbols['ans'].value = result
+            return result
     
     def is_builtin(self, name: str) -> bool:
         return isinstance(self.symbols.get(name), (BuiltinFunction, BuiltinVariable))
@@ -861,9 +871,9 @@ class TestInterpreter(unittest.TestCase):
             self.assertIsInstance(interpreter.symbols.get(var_name), Variable)
             self.assertAlmostEqual(interpreter.symbols.get(var_name).value, expected_value, places=7)
 
-    def _test_func_call(self, setup_expressions: list[str], call_expression: str, expected_result: float):
+    def _test_interpretation_with_setup(self, setup_expressions: list[str], call_expression: str, expected_result: float):
         """
-        A private helper method to test the result of a function call, with
+        A private helper method to test the result of an expression, with
         setup expressions to prepare the environment.
         """
         interpreter = Interpreter()
@@ -872,7 +882,7 @@ class TestInterpreter(unittest.TestCase):
             tokens = tokenizer.make_tokens()
             parser = Parser(setup_expr, tokens)
             root = parser.parse()
-            root.interpret(interpreter)
+            interpreter.interpret(root)
 
         tokenizer_call = Tokenizer(call_expression)
         tokens_call = tokenizer_call.make_tokens()
@@ -971,10 +981,18 @@ class TestInterpreter(unittest.TestCase):
             self._test_interpretation('pi = 4', None)
         self.assertIn('Cannot override built-in definitions', str(cm.exception))
 
+        with self.assertRaises(LocationalException) as cm:
+            self._test_interpretation('ans = 4', None)
+        self.assertIn('Cannot override built-in definitions', str(cm.exception))
+
+        with self.assertRaises(LocationalException) as cm:
+            self._test_interpretation('preans = 4', None)
+        self.assertIn('Cannot override built-in definitions', str(cm.exception))
+
     def test_function_call(self):
-        self._test_func_call(['g(x)=10*x', 'f(x)=2*x'], 'f(g(1))', 20)
-        self._test_func_call(['f(x)=2*a*x', 'a=12'], 'f(0.5)', 12)
-        self._test_func_call(['f(x)=2*x^2 + 3*x - 5.5', 'x = 0'], 'f(x)', -5.5)
+        self._test_interpretation_with_setup(['g(x)=10*x', 'f(x)=2*x'], 'f(g(1))', 20)
+        self._test_interpretation_with_setup(['f(x)=2*a*x', 'a=12'], 'f(0.5)', 12)
+        self._test_interpretation_with_setup(['f(x)=2*x^2 + 3*x - 5.5', 'x = 0'], 'f(x)', -5.5)
 
         self._test_interpretation('log(10)', 1)
         self._test_interpretation('sqrt(25)', 5)
@@ -988,11 +1006,11 @@ class TestInterpreter(unittest.TestCase):
         self.assertIn('Undefined function', str(cm.exception))
 
         with self.assertRaises(LocationalException) as cm:
-            self._test_func_call(['f=10'], 'f(0)', None)
+            self._test_interpretation_with_setup(['f=10'], 'f(0)', None)
         self.assertIn('Not a function', str(cm.exception))
 
         with self.assertRaises(LocationalException) as cm:
-            self._test_func_call(['f(x)=2*x', 'f=10'], 'f(0)', None)
+            self._test_interpretation_with_setup(['f(x)=2*x', 'f=10'], 'f(0)', None)
         self.assertIn('Not a function', str(cm.exception))
     
     def test_builtins(self):
@@ -1005,6 +1023,19 @@ class TestInterpreter(unittest.TestCase):
         self._test_interpretation('asin(1)', 1.5707963267948966)  # pi/2
         self._test_interpretation('acos(1)', 0)
         self._test_interpretation('atan(1)', 0.7853981633974483)  # pi/4
+    
+    def test_ans_preans(self):
+        self._test_interpretation_with_setup(['2', '3'], 'ans - preans', 1)
+
+        # ans and preans start at 0
+        self._test_interpretation('ans', 0)
+        self._test_interpretation('preans', 0)
+
+        # ans and preans are only updated if the previous evaluation returns a value
+        self._test_interpretation_with_setup(['2', 'f(x) = x'], 'ans', 2)
+
+        # variable definition returns a value, so ans is updated
+        self._test_interpretation_with_setup(['a = 3'], 'ans', 3)
 
 
 if __name__ == '__main__':
