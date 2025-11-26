@@ -341,7 +341,7 @@ class BinOp(AST):
                 right = self.right.interpret(interpreter)
                 if right == 0:
                     self.op.throw('Division by zero')
-                return self.left.interpret(interpreter) / self.right.interpret(interpreter)
+                return left / right
             case TokenType.EXP:    
                 return np.power(self.left.interpret(interpreter),
                                 self.right.interpret(interpreter),
