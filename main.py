@@ -4,6 +4,20 @@ import numpy as np
 import math
 from enum import Enum
 
+# GRAMMARS
+# stmt     = expr | definition
+# expr     = term { ("+" | "-") term }
+# term     = unary { ("*" | "/") unary }
+# unary    = ("+" | "-") unary | power
+# power    = primary [ "^" power ]
+# primary  = NUMBER | variable | func_call | "(" expr ")" | "|" expr "|"
+#
+# var_def    = WORD "=" expr
+# func_def   = WORD "(" WORD ")" "=" expr
+# variable   = WORD
+# func_call  = WORD "(" expr ")"
+
+
 
 ###############
 ## Tokenizer ##
@@ -31,7 +45,8 @@ class Tokenizer():
             '*': TokenType.MUL,
             '/': TokenType.DIV,
             '^': TokenType.EXP,
-            '=': TokenType.EQ
+            '=': TokenType.EQ,
+            '|': TokenType.ABS
         }
 
         while self.curr_char is not None:
@@ -125,6 +140,7 @@ class TokenType(Enum):
     DIV = '/'
     EXP = '^'
     EQ = '='
+    ABS = '|'
 
 
 class Token():
@@ -237,7 +253,9 @@ class Parser():
         return node
 
     def _primary(self) -> 'AST':
-        """primary = NUMBER | variable | func_call | "(" expr ")" """
+        """
+        primary = NUMBER | variable | func_call | "(" expr ")" | "|" expr "|"
+        """
         if self.curr_tok is None:
             raise LocationalException(
                 'Unexpected end of input', self.original_text,
@@ -264,6 +282,12 @@ class Parser():
             expr = self._expr()
             self._demand(TokenType.RPAREN)
             return expr
+
+        if self.curr_tok.type is TokenType.ABS:
+            self._demand(TokenType.ABS)
+            expr = self._expr()
+            self._demand(TokenType.ABS)
+            return AbsOp(expr)
 
         self.curr_tok.throw(f'Unexpected "{self.curr_tok.value}"')
 
@@ -368,6 +392,19 @@ class UnaryOp(AST):
 
     def __str__(self) -> str:
         return f'UnaryOp({self.op}{self.right})'
+
+
+class AbsOp(AST):
+    """AST node representing an absolute value operation (an expression sandwiched by two pipes)."""
+
+    def __init__(self, expr: AST):
+        self.expr = expr
+    
+    def interpret(self, interpreter):
+        return abs(self.expr.interpret(interpreter))
+
+    def __str__(self) -> str:
+        return f'AbsOp({self.expr})'
 
 
 class VariableDefinition(AST):
@@ -704,7 +741,7 @@ def tt(tokens: list[Token]):
 
 class TestTokenizer(unittest.TestCase):
     def test_all_operators_and_parens(self):
-        t = Tokenizer('()+-*/^')
+        t = Tokenizer('()+-*/^|')
         tokens = t.make_tokens()
         expected = [
             (TokenType.LPAREN, '('),
@@ -714,6 +751,7 @@ class TestTokenizer(unittest.TestCase):
             (TokenType.MUL, '*'),
             (TokenType.DIV, '/'),
             (TokenType.EXP, '^'),
+            (TokenType.ABS, '|')
         ]
         self.assertEqual(tt(tokens), expected)
 
@@ -865,6 +903,7 @@ class TestInterpreter(unittest.TestCase):
         self._test_interpretation("10 - 4 / 2", 8.0)
         self._test_interpretation("2 + 3 * 4 ^ 2", 50.0)
         self._test_interpretation("10 / 2 + 3 * 4", 17.0)
+        self._test_interpretation("2^|-2|", 4)
 
     def test_parentheses(self):
         self._test_interpretation("(1 + 2) * 3", 9.0)
@@ -898,6 +937,10 @@ class TestInterpreter(unittest.TestCase):
         with self.assertRaises(LocationalException) as cm:
             self._test_interpretation("10 / (5 - 5)", 0.0)
         self.assertIn('Division by zero', str(cm.exception))
+    
+    def test_abs(self):
+        self._test_interpretation("|-123|", 123)
+        self._test_interpretation("|123|", 123)
 
     # Variables and functions
 
