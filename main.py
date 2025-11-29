@@ -224,13 +224,22 @@ class Parser():
         return node
 
     def _term(self) -> 'AST':
-        """term = unary { ("*" | "/") unary }"""
-        node = self._unary()
+        """term = factor { ("*" | "/") factor }"""
+        node = self._factor()
         while self.curr_tok is not None and self.curr_tok.type in (TokenType.MUL, TokenType.DIV):
             op = self.curr_tok
             self._advance()
-            right = self._unary()
+            right = self._factor()
             node = BinOp(node, op, right)
+        return node
+
+    def _factor(self) -> 'AST':
+        """factor = unary { unary } - Implicit multiplication"""
+        node = self._unary()
+        while self.curr_tok is not None and self._is_implicit_multiplication_next():
+            op_token = Token(TokenType.MUL, '*', self.curr_tok.tokenizer, self.curr_tok.index)
+            right = self._unary()
+            node = BinOp(node, op_token, right)
         return node
 
     def _unary(self) -> 'AST':
@@ -272,40 +281,18 @@ class Parser():
                 node = FuncCall(word, arg)
             else:
                 node = VariableRef(word)
-            
-            # Implicit multiplication after word
-            # This will look something like "x3" or "x log(3)" or "a b"
-            # Inserts a "fake" multiplicaton BinOp
-            # Does not check for absolute value because the opening and closing are the same symbol, therefore it won't work
-            if self.curr_tok is not None and self.curr_tok.type in (TokenType.NUMBER, TokenType.WORD, TokenType.LPAREN):
-                op_token = Token(TokenType.MUL, '*', self.curr_tok.tokenizer, self.curr_tok.index)
-                right = self._primary()
-                node = BinOp(node, op_token, right)
             return node
 
         if self.curr_tok.type is TokenType.NUMBER:
             token = self.curr_tok
             self._advance()
             node = Constant(token)
-
-            # implicit multiplication after number
-            # does not check for TokenType.NUMBER because I don't want something like "3 4" to be valid
-            if self.curr_tok is not None and self.curr_tok.type in (TokenType.WORD, TokenType.LPAREN):
-                op_token = Token(TokenType.MUL, '*', self.curr_tok.tokenizer, self.curr_tok.index)
-                right = self._primary()
-                node = BinOp(node, op_token, right)
             return node
 
         if self.curr_tok.type is TokenType.LPAREN:
             self._demand(TokenType.LPAREN)
             node = self._expr()
             self._demand(TokenType.RPAREN)
-
-            # implicit multiplication after closing bracket
-            if self.curr_tok is not None and self.curr_tok.type in (TokenType.NUMBER, TokenType.WORD, TokenType.LPAREN):
-                op_token = Token(TokenType.MUL, '*', self.curr_tok.tokenizer, self.curr_tok.index)
-                right = self._primary()
-                node = BinOp(node, op_token, right)
             return node
 
         if self.curr_tok.type is TokenType.ABS:
@@ -313,12 +300,6 @@ class Parser():
             expr = self._expr()
             self._demand(TokenType.ABS)
             node = AbsOp(expr)
-
-            # implicit multiplication after closing absolute value
-            if self.curr_tok is not None and self.curr_tok.type in (TokenType.NUMBER, TokenType.WORD, TokenType.LPAREN):
-                op_token = Token(TokenType.MUL, '*', self.curr_tok.tokenizer, self.curr_tok.index)
-                right = self._primary()
-                node = BinOp(node, op_token, right)
             return node
 
         self.curr_tok.throw(f'Unexpected "{self.curr_tok.value}"')
@@ -337,6 +318,24 @@ class Parser():
             self.curr_tok.throw(f'Unexpected "{self.curr_tok.value}"')
 
         self._advance()
+    
+    def _is_implicit_multiplication_next(self) -> bool:
+        """Check if the next token suggests implicit multiplication."""
+        if self.curr_tok is None:
+            return False
+        
+        # Implicit multiplication occurs when we have consecutive elements
+        # that can be primary expressions without an operator between them.
+        #
+        # Disallow implicit multiplication of NUMBER followed by ABS because
+        # the closing "|" will be seen as the start of an new absolute value.
+        #
+        # For example: "3|4|", when the parser's current token is NUMBER(4) 
+        # and it advances to the next token, ABS, it will think it is appropriate
+        # to begin parsing the right operand of an implicit multiplication,
+        # falsely resulting in "unexpected end of input" when it sees no more
+        # tokens that follow.
+        return self.curr_tok.type in (TokenType.NUMBER, TokenType.WORD, TokenType.LPAREN)
 
     def _advance(self):
         # print(self.curr_tok)
@@ -998,15 +997,13 @@ class TestInterpreter(unittest.TestCase):
         self._test_interpretation('2(3)', 6)
         self._test_interpretation('(2)3', 6)
         self._test_interpretation('(2)(3)', 6)
+        self._test_interpretation('2 3', 6)  # looks weird but is allowed
+        self._test_interpretation('2^2(2)', 8)  # 2^2 takes precedence
+        self._test_interpretation('(2)(3)^2', 18)  # (3)^2 takes precedence
 
         # Disallow implicit multiplication of NUMBER followed by ABS
         with self.assertRaises(LocationalException) as cm:
             self._test_interpretation('2|3|')
-        self.assertIn('Unexpected token', str(cm.exception))
-
-        # Disallow implicit multiplication of two NUMBERs
-        with self.assertRaises(LocationalException) as cm:
-            self._test_interpretation('2 3')
         self.assertIn('Unexpected token', str(cm.exception))
 
     # Variables and functions
