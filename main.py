@@ -269,25 +269,57 @@ class Parser():
                 self._demand(TokenType.LPAREN)
                 arg = self._expr()
                 self._demand(TokenType.RPAREN)
-                return FuncCall(word, arg)
-            return VariableRef(word)
+                node = FuncCall(word, arg)
+            else:
+                node = VariableRef(word)
+            
+            # Implicit multiplication after word
+            # This will look something like "x3" or "x log(3)" or "a b"
+            # Inserts a "fake" multiplicaton BinOp
+            # Does not check for absolute value because the opening and closing are the same symbol, therefore it won't work
+            if self.curr_tok is not None and self.curr_tok.type in (TokenType.NUMBER, TokenType.WORD, TokenType.LPAREN):
+                op_token = Token(TokenType.MUL, '*', self.curr_tok.tokenizer, self.curr_tok.index)
+                right = self._primary()
+                node = BinOp(node, op_token, right)
+            return node
 
         if self.curr_tok.type is TokenType.NUMBER:
             token = self.curr_tok
             self._advance()
-            return Constant(token)
+            node = Constant(token)
+
+            # implicit multiplication after number
+            # does not check for TokenType.NUMBER because I don't want something like "3 4" to be valid
+            if self.curr_tok is not None and self.curr_tok.type in (TokenType.WORD, TokenType.LPAREN):
+                op_token = Token(TokenType.MUL, '*', self.curr_tok.tokenizer, self.curr_tok.index)
+                right = self._primary()
+                node = BinOp(node, op_token, right)
+            return node
 
         if self.curr_tok.type is TokenType.LPAREN:
             self._demand(TokenType.LPAREN)
-            expr = self._expr()
+            node = self._expr()
             self._demand(TokenType.RPAREN)
-            return expr
+
+            # implicit multiplication after closing bracket
+            if self.curr_tok is not None and self.curr_tok.type in (TokenType.NUMBER, TokenType.WORD, TokenType.LPAREN):
+                op_token = Token(TokenType.MUL, '*', self.curr_tok.tokenizer, self.curr_tok.index)
+                right = self._primary()
+                node = BinOp(node, op_token, right)
+            return node
 
         if self.curr_tok.type is TokenType.ABS:
             self._demand(TokenType.ABS)
             expr = self._expr()
             self._demand(TokenType.ABS)
-            return AbsOp(expr)
+            node = AbsOp(expr)
+
+            # implicit multiplication after closing absolute value
+            if self.curr_tok is not None and self.curr_tok.type in (TokenType.NUMBER, TokenType.WORD, TokenType.LPAREN):
+                op_token = Token(TokenType.MUL, '*', self.curr_tok.tokenizer, self.curr_tok.index)
+                right = self._primary()
+                node = BinOp(node, op_token, right)
+            return node
 
         self.curr_tok.throw(f'Unexpected "{self.curr_tok.value}"')
 
@@ -845,7 +877,7 @@ class TestInterpreter(unittest.TestCase):
     The bulk of the testing would be done here, at a high level.
     """
 
-    def _test_interpretation(self, expression: str, expected_result: float | None):
+    def _test_interpretation(self, expression: str, expected_result: float | None = None):
         """A private helper method to test evaluation of an expression."""
         tokenizer = Tokenizer(expression)
         tokens = tokenizer.make_tokens()
@@ -952,6 +984,30 @@ class TestInterpreter(unittest.TestCase):
     def test_abs(self):
         self._test_interpretation("|-123|", 123)
         self._test_interpretation("|123|", 123)
+    
+    def test_implicit_multiplication(self):
+        self._test_interpretation_with_setup(['x=3'], '2x', 6)
+        self._test_interpretation_with_setup(['x=2'], '3x+1', 7)
+        self._test_interpretation_with_setup(['f(x)=2*x'], '3f(2)', 12)
+        self._test_interpretation_with_setup(['x=2', 'y=3'], '2 x y', 12)
+        self._test_interpretation_with_setup(['x=2'], '2(x+1)', 6)
+        self._test_interpretation_with_setup(['x=2'], '|x|3', 6)
+        self._test_interpretation('2log(100)', 4)
+        self._test_interpretation('3sqrt(4)', 6)
+        self._test_interpretation('|2|3', 6)
+        self._test_interpretation('2(3)', 6)
+        self._test_interpretation('(2)3', 6)
+        self._test_interpretation('(2)(3)', 6)
+
+        # Disallow implicit multiplication of NUMBER followed by ABS
+        with self.assertRaises(LocationalException) as cm:
+            self._test_interpretation('2|3|')
+        self.assertIn('Unexpected token', str(cm.exception))
+
+        # Disallow implicit multiplication of two NUMBERs
+        with self.assertRaises(LocationalException) as cm:
+            self._test_interpretation('2 3')
+        self.assertIn('Unexpected token', str(cm.exception))
 
     # Variables and functions
 
@@ -1039,16 +1095,16 @@ class TestInterpreter(unittest.TestCase):
         self._test_interpretation_with_setup(['a = 3'], 'ans', 3)
 
 
-if __name__ == '__main__':
-    unittest.main(argv=[''], exit=False)
-    print('NOTE: DISABLE UNITTESTS BEFORE SUBMISSION\n' * 5)
-
-
 ################
 ## Entrypoint ##
 ################
 
 if __name__ == '__main__':
+    # Unittests
+    # Remember to comment this line out before assignment submission
+    # Uncomment to run
+    unittest.main(argv=[''], exit=False)
+
     calculator = Calculator()
     # use numpy to handle invalid exponentiation and other niche warnings
     with np.errstate(invalid='ignore', over='ignore'):
