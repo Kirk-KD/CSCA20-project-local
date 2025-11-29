@@ -728,6 +728,7 @@ class Calculator():
                         parser = Parser(line, tokens)
                         ast_root = parser.parse()
                         result = self.interpreter.interpret(ast_root)
+                        result = round(result, 12)
                         if isinstance(result, float):
                             print(int(result) if result.is_integer() else result)
                         elif isinstance(result, int):
