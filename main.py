@@ -322,7 +322,7 @@ class AST():
         return None
 
     def __str__(self) -> str:
-        return str(self)
+        return '<AST>'
 
     def __repr__(self) -> str:
         return self.__str__()
