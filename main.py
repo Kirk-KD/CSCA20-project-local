@@ -2,6 +2,8 @@ import unittest
 import matplotlib.pyplot as plt
 import numpy as np
 import math
+import csv
+import os
 from enum import Enum
 
 # GRAMMARS
@@ -16,7 +18,6 @@ from enum import Enum
 # func_def   = WORD "(" WORD ")" "=" expr
 # variable   = WORD
 # func_call  = WORD "(" expr ")"
-
 
 
 ###############
@@ -152,7 +153,8 @@ class Token():
 
     @property
     def original_text(self) -> str:
-        return self.tokenizer.line if self.tokenizer is not None else '<none>'
+        """Retrieves the original full line of input this token originated from."""
+        return self.tokenizer.line if self.tokenizer is not None else ''
 
     @property
     def length(self) -> int:
@@ -468,7 +470,7 @@ class FunctionDefinition(AST):
         if interpreter.is_builtin(self.name.value):
             self.name.throw('Cannot override built-in definitions')
         interpreter.symbols[self.name.value] = \
-            Function(self.name.value, self.arg_name.value, self.expr)
+            Function(self.name.value, self.arg_name.value, self.expr, self.name.original_text)
 
     def __str__(self) -> str:
         return f'FuncDef({self.name}, {self.arg_name}, {self.expr})'
@@ -527,14 +529,29 @@ class Statement(AST):
         return f'Statement({self.node})'
 
 
-class Function():
+class Saveable():
+    CSV_FIELDS = ['name', 'type', 'value']
+    TYPE_FUNCTION = 'F'
+    TYPE_VARIABLE = 'V'
+
+    def __init__(self, name: str, entry_type: str, value: str):
+        self.name = name
+        self.entry_type = entry_type
+        self.value = value
+    
+    def save(self, writer: csv.DictWriter):
+        writer.writerow({'name': self.name, 'type': self.entry_type, 'value': self.value})
+
+
+class Function(Saveable):
     """
     This class will allow more customizable functions by specifying an argument
     name, not just "x". This will also allow creation of built-in functions.
     Note that this is NOT an AST node.
     """
 
-    def __init__(self, func_name: str, arg_name: str, body_ast: AST):
+    def __init__(self, func_name: str, arg_name: str, body_ast: AST, line: str):
+        super().__init__(func_name, Saveable.TYPE_FUNCTION, line)
         self.func_name = func_name
         self.arg_name = arg_name
         # represents the calculations done by the function
@@ -563,6 +580,18 @@ class Function():
         return result
 
 
+class Variable(Saveable):
+    """
+    This class is a simple wrapper for a variable defined in the environment.
+    Note that this is NOT an AST node.
+    """
+
+    def __init__(self, var_name: str, value: float | int):
+        super().__init__(var_name, Saveable.TYPE_VARIABLE, str(value))
+        self.var_name = var_name
+        self.value = value
+
+
 class BuiltinFunction(Function):
     """
     This class will allow creation of built-in functions.
@@ -576,16 +605,8 @@ class BuiltinFunction(Function):
     def call(self, interpreter: 'Interpreter', arg_value: int | float):
         return self._call(arg_value)
 
-
-class Variable():
-    """
-    This class is a simple wrapper for a variable defined in the environment.
-    Note that this is NOT an AST node.
-    """
-
-    def __init__(self, var_name: str, value: float | int):
-        self.var_name = var_name
-        self.value = value
+    def save(self, _):
+        pass
 
 
 class BuiltinVariable(Variable):
@@ -593,7 +614,8 @@ class BuiltinVariable(Variable):
     A built-in variable. The interpreter should check for this type before
     trying to define a variable with the same name.
     """
-    pass
+    def save(self, _):
+        pass
 
 
 #################
@@ -735,6 +757,47 @@ class Calculator():
         plt.title(f'Graph of {func_name}({arg_name}), {arg_name} ∈ [{x_min}, {x_max}]')
         plt.grid(True)
         plt.show()
+    
+    def _save(self):
+        """Saves all currently defined variables and functions."""
+        with open('save.csv', 'w') as f:
+            writer = csv.DictWriter(f, fieldnames=Saveable.CSV_FIELDS)
+            for _, value in self.interpreter.symbols.items():
+                if isinstance(value, Saveable):
+                    value.save(writer)
+    
+    def _load(self):
+        if os.path.exists('save.csv'):
+            with open('save.csv') as f:
+                reader = csv.DictReader(f, fieldnames=Saveable.CSV_FIELDS)
+                counter = 0
+                for row in reader:
+                    name, save_type, value = row.values()
+                    if save_type == Saveable.TYPE_FUNCTION:
+                        stmt = value
+                    elif save_type == Saveable.TYPE_VARIABLE:
+                        stmt = f'{name}={value}'
+                    else:
+                        continue
+
+                    print('>>> ' + stmt.strip())
+
+                    try:
+                        self._eval_line(stmt)
+                        counter += 1
+                    except Exception as e:
+                        print('Loading failed.')
+                        print(e)
+            
+            if counter:
+                print(f'Successfully loaded {counter} saved functions and variables.')
+    
+    def _eval_line(self, line: str) -> float | int | None:
+        tokenizer = Tokenizer(line)
+        tokens = tokenizer.make_tokens()
+        parser = Parser(line, tokens)
+        ast_root = parser.parse()
+        return self.interpreter.interpret(ast_root)
 
     def run(self):
         """The read-eval-print loop.
@@ -743,6 +806,7 @@ class Calculator():
         seperately from a normal evaluation.
         """
         try:
+            self._load()
             while True:
                 try:
                     line = input('\n>>> ').strip()
@@ -754,19 +818,17 @@ class Calculator():
                             handler(line[len(cmd):].strip())
                             break
                     else:
-                        tokenizer = Tokenizer(line)
-                        tokens = tokenizer.make_tokens()
-                        parser = Parser(line, tokens)
-                        ast_root = parser.parse()
-                        result = self.interpreter.interpret(ast_root)
-                        result = round(result, 12)
-                        if isinstance(result, float):
-                            print(int(result) if result.is_integer() else result)
-                        elif isinstance(result, int):
-                            print(result)
+                        result = self._eval_line(line)
+                        if result is not None:
+                            result = round(result, 12)
+                            if isinstance(result, float):
+                                print(int(result) if result.is_integer() else result)
+                            elif isinstance(result, int):
+                                print(result)
+                        self._save()
                 except SystemExit:
                     break
-                except Exception as e:
+                except LocationalException as e:
                     print(e)
         except KeyboardInterrupt:
             pass
@@ -1100,7 +1162,7 @@ if __name__ == '__main__':
     # Unittests
     # Remember to comment this line out before assignment submission
     # Uncomment to run
-    unittest.main(argv=[''], exit=False)
+    # unittest.main(argv=[''], exit=False)
 
     calculator = Calculator()
     # use numpy to handle invalid exponentiation and other niche warnings
